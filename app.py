@@ -13,13 +13,13 @@ st.markdown("Based on form, trainer stats, going, and OR rank.")
 st.info("Scraping racecards using rpscrape...")
 
 try:
-    subprocess.run(["python3", "racecards.py"], check=True)
+    subprocess.run(["python3", "rpscrape/scripts/racecards.py"], check=True)
 except Exception as e:
-    st.error("Error running racecards.py – make sure you're in the right folder with rpscrape installed.")
+    st.error("Error running rpscrape/scripts/racecards.py – make sure your repo includes rpscrape.")
     st.stop()
 
 # --- Load the latest racecards JSON ---
-json_file = sorted(glob("racecards-*.json"))[-1]
+json_file = sorted(glob("rpscrape/scripts/racecards-*.json"))[-1]
 with open(json_file, "r") as f:
     data = json.load(f)
 
