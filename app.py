@@ -1,209 +1,96 @@
 
-        "import streamlit as st\n",
-        "import pandas as pd\n",
-        "import json\n",
-        "import subprocess\n",
-        "from glob import glob\n",
-        "from datetime import datetime\n",
-        "\n",
-        "# --- Run rpscrape to fetch today's racecards ---\n",
-        "st.title(\"🏇 UK Horse Racing Tips – Today\")\n",
-        "st.markdown(\"Based on form, trainer stats, going, and OR rank.\")\n",
-        "\n",
-        "st.info(\"Scraping racecards using rpscrape...\")\n",
-        "\n",
-        "try:\n",
-        "    # Removed capture_output=True and text=True as they might not be necessary and can sometimes cause issues\n",
-        "    # Added a timeout to prevent infinite waiting\n",
-        "    result = subprocess.run([\"python3\", \"racecards.py\"], check=True, timeout=60)\n",
-        "    # No longer capturing output here, assuming racecards.py writes to files\n",
-        "except FileNotFoundError:\n",
-        "    st.error(\"Error: 'racecards.py' script not found. Make sure it's in the correct directory.\")\n",
-        "    st.stop()\n",
-        "except subprocess.CalledProcessError as e:\n",
-        "    st.error(f\"Scraper failed with error code {e.returncode}\")\n",
-        "    st.code(e.stderr) # Displaying stderr if available\n",
-        "    st.stop()\n",
-        "except subprocess.TimeoutExpired:\n",
-        "    st.error(\"Scraper timed out. The script took too long to complete.\")\n",
-        "    st.stop()\n",
-        "except Exception as e:\n",
-        "    st.error(f\"An unexpected error occurred while running the scraper: {e}\")\n",
-        "    st.stop()\n",
-        "\n",
-        "\n",
-        "# --- Load the latest racecards JSON ---\n",
-        "json_files = sorted(glob(\"racecards-*.json\"))\n",
-        "\n",
-        "if not json_files:\n",
-        "    st.error(\"No racecards JSON files found after scraping. Please ensure 'racecards.py' is generating files.\")\n",
-        "    st.stop()\n",
-        "\n",
-        "json_file = json_files[-1]\n",
-        "try:\n",
-        "    with open(json_file, \"r\") as f:\n",
-        "        data = json.load(f)\n",
-        "except json.JSONDecodeError:\n",
-        "    st.error(f\"Error decoding JSON from {json_file}. The file might be corrupted or empty.\")\n",
-        "    st.stop()\n",
-        "except FileNotFoundError:\n",
-        "     st.error(f\"Error: JSON file {json_file} not found after scraping.\")\n",
-        "     st.stop()\n",
-        "except Exception as e:\n",
-        "    st.error(f\"An unexpected error occurred while loading the JSON file: {e}\")\n",
-        "    st.stop()\n",
-        "\n",
-        "\n",
-        "# --- Score logic function ---\n",
-        "def score_runner(runner, trainer_strike=0.10):\n",
-        "    score = 0\n",
-        "    # Ensure 'form' is a list before trying to access index 0\n",
-        "    last_finish_form = runner.get(\"form\")\n",
-        "    if isinstance(last_finish_form, list) and len(last_finish_form) > 0:\n",
-        "         if last_finish_form[0] <= 3:\n",
-        "            score += 1\n",
-        "    else:\n",
-        "        # Handle cases where 'form' is not a list or is empty\n",
-        "        pass # Or add a default scoring penalty/bonus\n",
-        "\n",
-        "\n",
-        "    if runner.get(\"trainer_strike\", 0) >= trainer_strike:\n",
-        "        score += 1\n",
-        "    if runner.get(\"going_match\", False):\n",
-        "        score += 1\n",
-        "    # Ensure 'or' is a number before comparison\n",
-        "    or_rank = runner.get(\"or\", 99)\n",
-        "    if isinstance(or_rank, (int, float)) and or_rank <= 3:\n",
-        "        score += 1\n",
-        "    return score\n",
-        "\n",
-        "# --- Parse and score runners ---\n",
-        "tips = []\n",
-        "# Added checks for expected keys in data\n",
-        "if data and \"meetings\" in data:\n",
-        "    for meeting in data[\"meetings\"]:\n",
-        "        if meeting.get(\"region\") != \"gb\":\n",
-        "            continue  # UK only\n",
-        "\n",
-        "        # Added checks for expected keys in meeting\n",
-        "        if \"course\" in meeting and \"races\" in meeting:\n",
-        "            course = meeting[\"course\"]\n",
-        "            for race in meeting[\"races\"]:\n",
-        "                # Added checks for expected keys in race\n",
-        "                if \"time\" in race and \"going\" in race and \"runners\" in race:\n",
-        "                    race_time = race[\"time\"]\n",
-        "                    going = race[\"going\"]\n",
-        "                    runners = []\n",
-        "\n",
-        "                    for i, r in enumerate(race[\"runners\"]):\n",
-        "                         # Added checks for expected keys in runner\n",
-        "                         runner_name = r.get(\"name\", \"\")\n",
-        "                         if runner_name: # Only process runners with names\n",
-        "                            runner = {\n",
-        "                                \"course\": course,\n",
-        "                                \"time\": race_time,\n",
-        "                                \"going\": going,\n",
-        "                                \"runner_name\": runner_name,\n",
-        "                                \"trainer\": r.get(\"trainer\", \"\"),\n",
-        "                                \"jockey\": r.get(\"jockey\", \"\"),\n",
-        "                                \"draw\": r.get(\"draw\", \"\"),\n",
-        "                                \"odds\": r.get(\"odds\", \"\"),\n",
-        "                                # Safer way to get last_finish, handles non-list 'form' and empty lists\n",
-        "                                \"last_finish\": r.get(\"form\", [9])[0] if isinstance(r.get(\"form\", [9]), list) and len(r.get(\"form\", [9])) > 0 else 9,\n",
-        "                                \"trainer_strike\": r.get(\"trainer_strike\", 0),\n",
-        "                                \"going_match\": r.get(\"going\", \"\").lower() in going.lower() if r.get(\"going\") else False, # Handle missing 'going' key\n",
-        "                                \"or_rank\": r.get(\"or\", 99)\n",
-        "                            }\n",
-        "                            runner[\"score\"] = score_runner(runner)\n",
-        "                            runners.append(runner)\n",
-        "                    if runners: # Only create DataFrame if there are runners\n",
-        "                        df = pd.DataFrame(runners)\n",
-        "                        # Added check to ensure df is not empty before filtering and sorting\n",
-        "                        if not df.empty:\n",
-        "                            df = df[df[\"score\"] >= 2].sort_values(\"score\", ascending=False).head(2)\n",
-        "                            tips.extend(df.to_dict(\"records\"))\n",
-        "\n",
-        "# --- Display tips ---\n",
-        "if tips:\n",
-        "    df_final = pd.DataFrame(tips)\n",
-        "    st.success(f\"Top {len(df_final)} tips generated for today!\")\n",
-        "    # Ensure the columns exist in the DataFrame before selecting\n",
-        "    display_cols = [col for col in [\"course\", \"time\", \"runner_name\", \"trainer\", \"jockey\", \"odds\", \"score\"] if col in df_final.columns]\n",
-        "    st.dataframe(df_final[display_cols])\n",
-        "else:\n",
-        "    st.warning(\"No qualifying tips found for today based on the current rules.\")"
-      ]
-    },
-    {
-      "cell_type": "code",
-      "metadata": {
-        "colab": {
-          "base_uri": "https://localhost:8080/"
-        },
-        "id": "568a7416",
-        "outputId": "c7f6946d-0210-4cec-851d-dbe0934b9110"
-      },
-      "source": [
-        "!pip install streamlit"
-      ],
-      "execution_count": 2,
-      "outputs": [
-        {
-          "output_type": "stream",
-          "name": "stdout",
-          "text": [
-            "Collecting streamlit\n",
-            "  Downloading streamlit-1.46.1-py3-none-any.whl.metadata (9.0 kB)\n",
-            "Requirement already satisfied: altair<6,>=4.0 in /usr/local/lib/python3.11/dist-packages (from streamlit) (5.5.0)\n",
-            "Requirement already satisfied: blinker<2,>=1.5.0 in /usr/local/lib/python3.11/dist-packages (from streamlit) (1.9.0)\n",
-            "Requirement already satisfied: cachetools<7,>=4.0 in /usr/local/lib/python3.11/dist-packages (from streamlit) (5.5.2)\n",
-            "Requirement already satisfied: click<9,>=7.0 in /usr/local/lib/python3.11/dist-packages (from streamlit) (8.2.1)\n",
-            "Requirement already satisfied: numpy<3,>=1.23 in /usr/local/lib/python3.11/dist-packages (from streamlit) (2.0.2)\n",
-            "Requirement already satisfied: packaging<26,>=20 in /usr/local/lib/python3.11/dist-packages (from streamlit) (24.2)\n",
-            "Requirement already satisfied: pandas<3,>=1.4.0 in /usr/local/lib/python3.11/dist-packages (from streamlit) (2.2.2)\n",
-            "Requirement already satisfied: pillow<12,>=7.1.0 in /usr/local/lib/python3.11/dist-packages (from streamlit) (11.2.1)\n",
-            "Requirement already satisfied: protobuf<7,>=3.20 in /usr/local/lib/python3.11/dist-packages (from streamlit) (5.29.5)\n",
-            "Requirement already satisfied: pyarrow>=7.0 in /usr/local/lib/python3.11/dist-packages (from streamlit) (18.1.0)\n",
-            "Requirement already satisfied: requests<3,>=2.27 in /usr/local/lib/python3.11/dist-packages (from streamlit) (2.32.3)\n",
-            "Requirement already satisfied: tenacity<10,>=8.1.0 in /usr/local/lib/python3.11/dist-packages (from streamlit) (8.5.0)\n",
-            "Requirement already satisfied: toml<2,>=0.10.1 in /usr/local/lib/python3.11/dist-packages (from streamlit) (0.10.2)\n",
-            "Requirement already satisfied: typing-extensions<5,>=4.4.0 in /usr/local/lib/python3.11/dist-packages (from streamlit) (4.14.0)\n",
-            "Collecting watchdog<7,>=2.1.5 (from streamlit)\n",
-            "  Downloading watchdog-6.0.0-py3-none-manylinux2014_x86_64.whl.metadata (44 kB)\n",
-            "\u001b[2K     \u001b[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m \u001b[32m44.3/44.3 kB\u001b[0m \u001b[31m1.8 MB/s\u001b[0m eta \u001b[36m0:00:00\u001b[0m\n",
-            "\u001b[?25hRequirement already satisfied: gitpython!=3.1.19,<4,>=3.0.7 in /usr/local/lib/python3.11/dist-packages (from streamlit) (3.1.44)\n",
-            "Collecting pydeck<1,>=0.8.0b4 (from streamlit)\n",
-            "  Downloading pydeck-0.9.1-py2.py3-none-any.whl.metadata (4.1 kB)\n",
-            "Requirement already satisfied: tornado!=6.5.0,<7,>=6.0.3 in /usr/local/lib/python3.11/dist-packages (from streamlit) (6.4.2)\n",
-            "Requirement already satisfied: jinja2 in /usr/local/lib/python3.11/dist-packages (from altair<6,>=4.0->streamlit) (3.1.6)\n",
-            "Requirement already satisfied: jsonschema>=3.0 in /usr/local/lib/python3.11/dist-packages (from altair<6,>=4.0->streamlit) (4.24.0)\n",
-            "Requirement already satisfied: narwhals>=1.14.2 in /usr/local/lib/python3.11/dist-packages (from altair<6,>=4.0->streamlit) (1.45.0)\n",
-            "Requirement already satisfied: gitdb<5,>=4.0.1 in /usr/local/lib/python3.11/dist-packages (from gitpython!=3.1.19,<4,>=3.0.7->streamlit) (4.0.12)\n",
-            "Requirement already satisfied: python-dateutil>=2.8.2 in /usr/local/lib/python3.11/dist-packages (from pandas<3,>=1.4.0->streamlit) (2.9.0.post0)\n",
-            "Requirement already satisfied: pytz>=2020.1 in /usr/local/lib/python3.11/dist-packages (from pandas<3,>=1.4.0->streamlit) (2025.2)\n",
-            "Requirement already satisfied: tzdata>=2022.7 in /usr/local/lib/python3.11/dist-packages (from pandas<3,>=1.4.0->streamlit) (2025.2)\n",
-            "Requirement already satisfied: charset-normalizer<4,>=2 in /usr/local/lib/python3.11/dist-packages (from requests<3,>=2.27->streamlit) (3.4.2)\n",
-            "Requirement already satisfied: idna<4,>=2.5 in /usr/local/lib/python3.11/dist-packages (from requests<3,>=2.27->streamlit) (3.10)\n",
-            "Requirement already satisfied: urllib3<3,>=1.21.1 in /usr/local/lib/python3.11/dist-packages (from requests<3,>=2.27->streamlit) (2.4.0)\n",
-            "Requirement already satisfied: certifi>=2017.4.17 in /usr/local/lib/python3.11/dist-packages (from requests<3,>=2.27->streamlit) (2025.6.15)\n",
-            "Requirement already satisfied: smmap<6,>=3.0.1 in /usr/local/lib/python3.11/dist-packages (from gitdb<5,>=4.0.1->gitpython!=3.1.19,<4,>=3.0.7->streamlit) (5.0.2)\n",
-            "Requirement already satisfied: MarkupSafe>=2.0 in /usr/local/lib/python3.11/dist-packages (from jinja2->altair<6,>=4.0->streamlit) (3.0.2)\n",
-            "Requirement already satisfied: attrs>=22.2.0 in /usr/local/lib/python3.11/dist-packages (from jsonschema>=3.0->altair<6,>=4.0->streamlit) (25.3.0)\n",
-            "Requirement already satisfied: jsonschema-specifications>=2023.03.6 in /usr/local/lib/python3.11/dist-packages (from jsonschema>=3.0->altair<6,>=4.0->streamlit) (2025.4.1)\n",
-            "Requirement already satisfied: referencing>=0.28.4 in /usr/local/lib/python3.11/dist-packages (from jsonschema>=3.0->altair<6,>=4.0->streamlit) (0.36.2)\n",
-            "Requirement already satisfied: rpds-py>=0.7.1 in /usr/local/lib/python3.11/dist-packages (from jsonschema>=3.0->altair<6,>=4.0->streamlit) (0.26.0)\n",
-            "Requirement already satisfied: six>=1.5 in /usr/local/lib/python3.11/dist-packages (from python-dateutil>=2.8.2->pandas<3,>=1.4.0->streamlit) (1.17.0)\n",
-            "Downloading streamlit-1.46.1-py3-none-any.whl (10.1 MB)\n",
-            "\u001b[2K   \u001b[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m \u001b[32m10.1/10.1 MB\u001b[0m \u001b[31m67.9 MB/s\u001b[0m eta \u001b[36m0:00:00\u001b[0m\n",
-            "\u001b[?25hDownloading pydeck-0.9.1-py2.py3-none-any.whl (6.9 MB)\n",
-            "\u001b[2K   \u001b[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m \u001b[32m6.9/6.9 MB\u001b[0m \u001b[31m106.0 MB/s\u001b[0m eta \u001b[36m0:00:00\u001b[0m\n",
-            "\u001b[?25hDownloading watchdog-6.0.0-py3-none-manylinux2014_x86_64.whl (79 kB)\n",
-            "\u001b[2K   \u001b[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\u001b[0m \u001b[32m79.1/79.1 kB\u001b[0m \u001b[31m5.7 MB/s\u001b[0m eta \u001b[36m0:00:00\u001b[0m\n",
-            "\u001b[?25hInstalling collected packages: watchdog, pydeck, streamlit\n",
-            "Successfully installed pydeck-0.9.1 streamlit-1.46.1 watchdog-6.0.0\n"
-          ]
-        }
-      ]
-    }
-  ]
-}
+import streamlit as st
+import pandas as pd
+import json
+import subprocess
+import os
+from glob import glob
+from datetime import datetime
+
+# --- Streamlit UI ---
+st.title("🏇 UK Horse Racing Tips – Today")
+st.markdown("Based on form, trainer stats, going, and OR rank.")
+st.info("Scraping racecards using rpscrape...")
+
+# --- Run scraper ---
+try:
+    result = subprocess.run(
+        ["python3", "rpscrape/scripts/racecards.py"],
+        capture_output=True, text=True, check=True
+    )
+    st.success("racecards.py ran successfully")
+    st.code(result.stdout, language='bash')
+except subprocess.CalledProcessError as e:
+    st.error("Scraper failed!")
+    st.code(e.stderr, language='bash')
+    st.stop()
+
+# --- List files to debug JSON output ---
+st.subheader("Files in rpscrape/scripts/")
+st.code(os.listdir("rpscrape/scripts"))
+
+# --- Load the latest racecards JSON ---
+try:
+    json_file = sorted(glob("rpscrape/scripts/racecards-*.json"))[-1]
+    with open(json_file, "r") as f:
+        data = json.load(f)
+except Exception as e:
+    st.error("No racecards JSON found. Scraper might not have created it.")
+    st.stop()
+
+# --- Scoring logic ---
+def score_runner(runner, trainer_strike=0.10):
+    score = 0
+    if runner.get("last_finish", 0) <= 3:
+        score += 1
+    if runner.get("trainer_strike", 0) >= trainer_strike:
+        score += 1
+    if runner.get("going_match", False):
+        score += 1
+    if runner.get("or_rank", 99) <= 3:
+        score += 1
+    return score
+
+# --- Parse and score runners ---
+tips = []
+for meeting in data.get("meetings", []):
+    if meeting.get("region") != "gb":
+        continue
+
+    course = meeting["course"]
+    for race in meeting["races"]:
+        race_time = race.get("time", "")
+        going = race.get("going", "")
+        runners = []
+
+        for r in race.get("runners", []):
+            runner = {
+                "course": course,
+                "time": race_time,
+                "going": going,
+                "runner_name": r.get("name", ""),
+                "trainer": r.get("trainer", ""),
+                "jockey": r.get("jockey", ""),
+                "draw": r.get("draw", ""),
+                "odds": r.get("odds", ""),
+                "last_finish": r.get("form", [9])[0] if isinstance(r.get("form", [9]), list) else 9,
+                "trainer_strike": r.get("trainer_strike", 0),
+                "going_match": r.get("going", "").lower() in going.lower(),
+                "or_rank": r.get("or", 99)
+            }
+            runner["score"] = score_runner(runner)
+            runners.append(runner)
+
+        df = pd.DataFrame(runners)
+        df = df[df["score"] >= 2].sort_values("score", ascending=False).head(2)
+        tips.extend(df.to_dict("records"))
+
+# --- Show results ---
+if tips:
+    df_final = pd.DataFrame(tips)
+    st.success(f"Top {len(df_final)} tips generated for today!")
+    st.dataframe(df_final[[
+        "course", "time", "runner_name", "trainer", "jockey", "odds", "score"
+    ]])
+else:
+    st.warning("No qualifying tips found for today based on the current rules.")
