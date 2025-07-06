@@ -1,0 +1,6 @@
+streamlit
+aiohttp
+lxml
+orjson
+requests
+tomli
